@@ -37,7 +37,7 @@ class DiceConfig:
 	}
 
 	# 正则表达式
-	TOKEN_PATTERN = re.compile(r'\d+|D|[\+\-\*\/\(\)]')
+	TOKEN_PATTERN = re.compile(r'\d+|D|[+\-*/()]')
 
 
 class I18nManager:
@@ -152,10 +152,15 @@ class Dice(Node):
 		self.size = size
 
 	def render(self):
+		def is_exp(node):
+			return isinstance(node, DiceExpanded) and len(node.rolls) > 1 and not node.collapsed
+
 		n_str = self.num.render()
 		s_str = self.size.render()
-		if isinstance(self.num, (BinOp, Dice, DiceExpanded)): n_str = f"({n_str})"
-		if isinstance(self.size, (BinOp, Dice, DiceExpanded)): s_str = f"({s_str})"
+		if isinstance(self.num, (BinOp, Dice)): n_str = f"({n_str})"
+		if isinstance(self.size, (BinOp, Dice)): s_str = f"({s_str})"
+		if is_exp(self.num): n_str = f"({n_str})"
+		if is_exp(self.size): s_str = f"({s_str})"
 		if isinstance(self.num, Number) and self.num.value < 0: n_str = f"({n_str})"
 		if isinstance(self.size, Number) and self.size.value < 0: s_str = f"({s_str})"
 		return f"{n_str}D{s_str}"
@@ -646,8 +651,8 @@ if __name__ == "__main__":
 		print(json.dumps(response, indent=2, ensure_ascii=False))
 
 		print("直接展示：")
-		print("\n=".join(result.steps))
-		print("")
+		print("{}\n".format('\n='.join(result.steps)) if result.steps else "", end="")
+		print(f"发生错误：{result.error['message']}\n" if result.error else "", end="")
 
 
 	while True:
