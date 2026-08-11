@@ -16,8 +16,8 @@
 """
 
 import json
-import os
 import tempfile
+from pathlib import Path
 import unittest
 
 from src.dice_engine import DiceSimulator, DiceConfig, I18nManager
@@ -313,6 +313,8 @@ class TestI18n(unittest.TestCase):
 		en = DiceSimulator(lang='en_US').execute('10 / 0')
 		self.assertEqual(zh.error['message'], self._msg('zh_CN', 'err_div_zero'))
 		self.assertEqual(en.error['message'], self._msg('en_US', 'err_div_zero'))
+		self.assertEqual(zh.lang, 'zh_CN')
+		self.assertEqual(en.lang, 'en_US')
 
 	def test_default_lang(self):
 		res = DiceSimulator().execute('10 / 0')
@@ -331,9 +333,13 @@ class TestI18n(unittest.TestCase):
 		self.assertIn('zh_CN', langs)
 		self.assertIn('en_US', langs)
 
-	def test_unknown_lang_falls_back_to_en(self):
+	def test_unknown_lang_falls_back_to_default(self):
 		msg = I18nManager.t('err_div_zero', lang='xx_XX')
-		self.assertEqual(msg, self._msg('en_US', 'err_div_zero'))
+		self.assertEqual(msg, self._msg('zh_CN', 'err_div_zero'))
+
+	def test_case_insensitive_lang(self):
+		msg = I18nManager.t('err_div_zero', lang='zh_cn')
+		self.assertEqual(msg, self._msg('zh_CN', 'err_div_zero'))
 
 	def test_unknown_key_falls_back_to_key(self):
 		msg = I18nManager.t('no_such_key', lang='en_US')
@@ -344,15 +350,13 @@ class TestI18n(unittest.TestCase):
 		original_dir = I18nManager._LOCALE_DIR
 		try:
 			with tempfile.TemporaryDirectory() as tmp:
-				I18nManager._LOCALE_DIR = tmp
-				path = os.path.join(tmp, 'test_XX.json')
-				with open(path, 'w', encoding='utf-8') as f:
-					json.dump({'greet': 'hi'}, f)
+				I18nManager._LOCALE_DIR = Path(tmp)
+				path = Path(tmp) / 'test_XX.json'
+				path.write_text(json.dumps({'greet': 'hi'}), encoding='utf-8')
 				self.assertEqual(I18nManager.t('greet', lang='test_XX'), 'hi')
 
 				# 文件已改但未 reload → 仍是缓存旧值
-				with open(path, 'w', encoding='utf-8') as f:
-					json.dump({'greet': 'hello'}, f)
+				path.write_text(json.dumps({'greet': 'hello'}), encoding='utf-8')
 				self.assertEqual(I18nManager.t('greet', lang='test_XX'), 'hi')
 
 				# 手动 reload 后读到新值
@@ -428,6 +432,7 @@ class TestResultStructure(unittest.TestCase):
 		self.assertIs(res.error, None)
 		self.assertTrue(res.is_success)
 		self.assertIsInstance(res.seed, int)
+		self.assertEqual(res.lang, 'zh_CN')
 
 	def test_error_result_fields(self):
 		res = DiceSimulator().execute('10 / 0')
@@ -437,6 +442,7 @@ class TestResultStructure(unittest.TestCase):
 		self.assertEqual(res.error['error_code'], 'err_div_zero')
 		self.assertIsNone(res.error['position'])
 		self.assertIsInstance(res.seed, int)
+		self.assertEqual(res.lang, 'zh_CN')
 
 
 if __name__ == '__main__':

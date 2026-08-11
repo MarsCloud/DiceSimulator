@@ -6,8 +6,8 @@ DiceConfig 为不可变实例级配置（frozen dataclass），由 DiceSimulator
 """
 
 import json
-import os
 from dataclasses import dataclass
+from pathlib import Path
 
 
 @dataclass(frozen=True)
@@ -44,18 +44,35 @@ class I18nManager:
 	# 默认语言（不可变常量）；DiceSimulator(lang=...) 可按实例覆盖
 	DEFAULT_LANG = 'zh_CN'
 
-	_LOCALE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'locales')
+	_LOCALE_DIR = Path(__file__).resolve().parent / 'locales'
 	_cache = {}  # lang -> {message_key: template}
+
+	@classmethod
+	def _canonical_lang(cls, lang: str) -> str:
+		"""把 lang 大小写不敏感地归一到 locales 目录中真实存在的语言名。
+
+		用户传 zh_cn / ZH_CN / zh_CN 都会命中 zh_CN.json；匹配不到时原样返回，
+		由 _load 当作缺失语言处理、t() 再回退默认语言。
+		"""
+		try:
+			paths = list(cls._LOCALE_DIR.iterdir())
+		except OSError:
+			return lang
+		target = lang.lower()
+		for p in paths:
+			if p.suffix == '.json' and p.stem.lower() == target:
+				return p.stem
+		return lang
 
 	@classmethod
 	def _load(cls, lang: str) -> dict:
 		"""读取并缓存某语言的模板表；文件缺失时返回空表（由 t 回退）。"""
+		lang = cls._canonical_lang(lang)  # 大小写不敏感定位真实语言名
 		table = cls._cache.get(lang)
 		if table is None:
-			path = os.path.join(cls._LOCALE_DIR, f'{lang}.json')
 			try:
-				with open(path, encoding='utf-8') as f:
-					table = json.load(f)
+				table = json.loads(
+					(cls._LOCALE_DIR / f'{lang}.json').read_text(encoding='utf-8'))
 			except OSError:
 				table = {}
 			cls._cache[lang] = table
@@ -65,10 +82,10 @@ class I18nManager:
 	def available_langs(cls) -> list:
 		"""当前可用的语言（按 locales 目录中存在的 .json 文件）。"""
 		try:
-			names = os.listdir(cls._LOCALE_DIR)
+			names = [p.stem for p in cls._LOCALE_DIR.iterdir() if p.suffix == '.json']
 		except OSError:
 			return []
-		return sorted(name[:-5] for name in names if name.endswith('.json'))
+		return sorted(names)
 
 	@classmethod
 	def reload(cls, lang: str = None) -> None:
@@ -81,15 +98,15 @@ class I18nManager:
 			for name in cls.available_langs():
 				cls._cache.pop(name, None)
 		else:
-			cls._cache.pop(lang, None)
+			cls._cache.pop(cls._canonical_lang(lang), None)
 
 	@classmethod
 	def t(cls, key: str, lang: str = None, **kwargs) -> str:
 		lang = lang or cls.DEFAULT_LANG
 		msg = cls._load(lang).get(key)
 		if msg is None:
-			# 缺失键回退英文，再回退到键名本身
-			if lang != 'en_US':
-				return cls.t(key, lang='en_US', **kwargs)
+			# 缺失键回退默认语言，再回退到键名本身
+			if lang != cls.DEFAULT_LANG:
+				return cls.t(key, lang=cls.DEFAULT_LANG, **kwargs)
 			return key
 		return msg.format(**kwargs)

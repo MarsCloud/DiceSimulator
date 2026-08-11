@@ -23,7 +23,6 @@ class DiceError(Exception):
 		return {
 			"error_code": self.message_key,
 			"position": self.pos,
-			"message": I18nManager.t(self.message_key, lang=lang,
-									 pos=self.pos, **self.params),
+			"message": I18nManager.t(self.message_key, lang=lang, pos=self.pos, **self.params),
 			"params": self.params,
 		}
