@@ -57,16 +57,16 @@ class Parser:
 
 	def __init__(self, config: DiceConfig):
 		self.config = config
+		self.tokens = []
+		self.pos = 0
+		self.n_tokens = len(self.tokens)
 
 	def peek(self):
 		return self.tokens[self.pos] if self.pos < self.n_tokens else None
 
-	def consume(self, expected: str = None) -> str:
+	def consume(self) -> str:
+		# 调用方均已保证当前存在 token；consume 只负责取出并前进
 		token = self.peek()
-		if token is None:
-			raise DiceError('err_unexpected_end')
-		if expected and token != expected:
-			raise DiceError('err_syntax', pos=self.pos, expected=expected, token=token)
 		self.pos += 1
 		return token
 
@@ -144,13 +144,14 @@ class Parser:
 		self.check_depth(depth)
 		token = self.peek()
 		if token is None:
-			raise DiceError('err_missing_atom')
+			# 输入在此处结束，但这里本应出现数字或括号（如 '1+'、'd*'）
+			raise DiceError('err_missing_atom', pos=self.pos)
 
 		if token.isdigit():
 			return Number(self.consume())
 
 		if token == '(':
-			self.consume('(')
+			self.consume()
 			node = self.expr(depth + 1)
 			if self.peek() is None:
 				# 输入在 ')' 之前就结束了 → 真的缺右括号
@@ -158,7 +159,7 @@ class Parser:
 			if self.peek() != ')':
 				# 括号内还残留其他内容 → 与顶层一致地报"剩余字符"
 				raise DiceError('err_unparsed', pos=self.pos, token=self.peek())
-			self.consume(')')
+			self.consume()
 			return node
 
 		if token == 'D':

@@ -41,38 +41,46 @@ class I18nManager:
 	进程重启自然重新加载。
 	"""
 
-	# 默认语言（不可变常量）；DiceSimulator(lang=...) 可按实例覆盖
-	DEFAULT_LANG = 'zh_CN'
+	# 默认语言（不可变常量）：调用方未指定 lang 时用哪个。
+	# lang 不分大小写，统一以小写作为规范形式（如 'zh_cn'）
+	DEFAULT_LANG = 'zh_cn'
 
 	_LOCALE_DIR = Path(__file__).resolve().parent / 'locales'
 	_cache = {}  # lang -> {message_key: template}
 
 	@classmethod
 	def _canonical_lang(cls, lang: str) -> str:
-		"""把 lang 大小写不敏感地归一到 locales 目录中真实存在的语言名。
+		"""把 lang 大小写不敏感地归一为小写规范形式（'zh_CN'/'ZH_CN'/'zh_cn' → 'zh_cn'）。
 
-		用户传 zh_cn / ZH_CN / zh_CN 都会命中 zh_CN.json；匹配不到时原样返回，
-		由 _load 当作缺失语言处理、t() 再回退默认语言。
+		内部缓存键、对外输出统一用小写；文件名大小写无关，读取时单独定位。
 		"""
+		return lang.lower()
+
+	@classmethod
+	def _resolve_path(cls, lang: str) -> Path:
+		"""大小写不敏感地在 locales 目录中定位语言文件，找不到返回 None。"""
+		target = cls._canonical_lang(lang)
 		try:
 			paths = list(cls._LOCALE_DIR.iterdir())
 		except OSError:
-			return lang
-		target = lang.lower()
+			return None
 		for p in paths:
 			if p.suffix == '.json' and p.stem.lower() == target:
-				return p.stem
-		return lang
+				return p
+		return None
 
 	@classmethod
 	def _load(cls, lang: str) -> dict:
-		"""读取并缓存某语言的模板表；文件缺失时返回空表（由 t 回退）。"""
-		lang = cls._canonical_lang(lang)  # 大小写不敏感定位真实语言名
+		"""读取并缓存某语言的模板表；文件缺失时返回空表（由 t 回退）。
+
+		缓存键统一为小写规范形式（如 'zh_cn'），与文件名实际大小写无关。
+		"""
+		lang = cls._canonical_lang(lang)
 		table = cls._cache.get(lang)
 		if table is None:
+			path = cls._resolve_path(lang)
 			try:
-				table = json.loads(
-					(cls._LOCALE_DIR / f'{lang}.json').read_text(encoding='utf-8'))
+				table = json.loads(path.read_text(encoding='utf-8')) if path else {}
 			except OSError:
 				table = {}
 			cls._cache[lang] = table
@@ -80,9 +88,9 @@ class I18nManager:
 
 	@classmethod
 	def available_langs(cls) -> list:
-		"""当前可用的语言（按 locales 目录中存在的 .json 文件）。"""
+		"""当前可用的语言（统一小写规范形式，如 ['en_us', 'zh_cn']）。"""
 		try:
-			names = [p.stem for p in cls._LOCALE_DIR.iterdir() if p.suffix == '.json']
+			names = [p.stem.lower() for p in cls._LOCALE_DIR.iterdir() if p.suffix == '.json']
 		except OSError:
 			return []
 		return sorted(names)
@@ -91,8 +99,7 @@ class I18nManager:
 	def reload(cls, lang: str = None) -> None:
 		"""强制重读消息表：清除缓存，下次 t() 时重新从文件加载。
 
-		lang 指定时只重读该语言；为 None 时重读所有可用语言
-		（含新添加的语言文件）。
+		lang 指定时只重读该语言（大小写不敏感）；为 None 时重读所有可用语言。
 		"""
 		if lang is None:
 			for name in cls.available_langs():
@@ -102,7 +109,7 @@ class I18nManager:
 
 	@classmethod
 	def t(cls, key: str, lang: str = None, **kwargs) -> str:
-		lang = lang or cls.DEFAULT_LANG
+		lang = cls._canonical_lang(lang or cls.DEFAULT_LANG)
 		msg = cls._load(lang).get(key)
 		if msg is None:
 			# 缺失键回退默认语言，再回退到键名本身

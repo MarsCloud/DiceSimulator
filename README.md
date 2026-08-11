@@ -61,14 +61,18 @@ else:
 result = sim.execute("(1d4)d6")
 print(f"Result: {result.result}")
 
-# 3. Switch Language / 切换语言（按实例生效，互不影响）
+# 3. Fixed Seed / 指定种子（本次可复现）
+result = sim.execute("3d6", seed=42)
+print(f"Result: {result.result}")           # 基于 seed 42，结果固定可重放
+
+# 4. Switch Language / 切换语言（按实例生效，互不影响）
 zh = DiceSimulator(lang='zh_CN')
 en = DiceSimulator(lang='en_US')
 print(zh.execute("10/0").error['message'])  # 除数为零
 print(en.execute("10/0").error['message'])  # Division by zero
 ```
 
-> 同一实例的多次 `execute()` 调用每次使用独立推导的种子，`result.seed` 均可单独重放。
+> **种子策略**：seed 是 `execute()` 的每调用参数。不传时自动用 `secrets` 生成不可预测种子；传入 `execute(expr, seed=42)` 时本次结果基于 42、稳定可重放，且构造器无需（也不接受）seed。
 
 ### Interactive Demo / 交互式演示
 
@@ -89,8 +93,26 @@ The engine returns a structured `DiceResult` object, perfect for JSON serializat
   "result": 13,
   "is_success": true,
   "seed": 1786435139,
-  "error": null,
-  "lang": "zh_CN"
+  "error": null
+}
+```
+
+错误时 `error` 不为 null，`lang` 只存在于 error 内层（因为只有错误信息依赖语言）：
+
+```json
+{
+  "raw_input": "10/0",
+  "steps": ["10/0"],
+  "result": null,
+  "is_success": false,
+  "seed": 1786435139,
+  "error": {
+    "error_code": "err_div_zero",
+    "position": null,
+    "message": "除数为零",
+    "params": {},
+    "lang": "zh_cn"
+  }
 }
 ```
 
@@ -112,15 +134,15 @@ sim = DiceSimulator(config=DiceConfig(
 ))
 
 # 默认语言与可用语言
-print(I18nManager.DEFAULT_LANG)       # zh_CN
-print(I18nManager.available_langs())  # ['en_US', 'zh_CN']
+print(I18nManager.DEFAULT_LANG)       # zh_cn
+print(I18nManager.available_langs())  # ['en_us', 'zh_cn']
 ```
 
 ### I18n / 国际化
 
 *   语言按实例指定：`DiceSimulator(lang='zh_CN')`。
 *   消息表从 `src/locales/<lang>.json` 读取；新增语言只需添加键结构与现有文件一致的 JSON 文件。
-*   语言名大小写不敏感：`zh_cn` / `zh_CN` 均可。
+*   语言名大小写不敏感：`zh_cn` / `zh_CN` / `ZH_CN` 均可；内部与输出统一为小写（如 `zh_cn`）。
 *   缺失键回退到默认语言（`DEFAULT_LANG`），再回退到键名本身。
 *   修改翻译文件后需调用 `I18nManager.reload(lang)` 手动重读（进程重启也会自动重新加载）。
 

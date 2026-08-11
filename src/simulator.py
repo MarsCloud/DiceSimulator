@@ -6,7 +6,7 @@
 """
 
 import random
-import time
+import secrets
 from dataclasses import dataclass
 from typing import List, Optional, Dict
 
@@ -25,48 +25,43 @@ class DiceResult:
 	result: Optional[int]  # 最终结果
 	is_success: bool  # 是否执行成功
 	seed: int  # 随机数种子（用该 seed 重放可复现结果）
-	error: Optional[Dict]  # 错误信息字典
-	lang: str  # 消息语言（本实例执行时的语言）
+	error: Optional[Dict]  # 错误信息字典（含 lang，见 DiceError.to_dict）
 
 
 class DiceSimulator:
 	"""可复用的掷骰模拟器：配置一次，多次执行。
 
 	用法：
-		sim = DiceSimulator(seed=42, config=cfg, lang='zh_CN')
-		sim.execute('3d6')
-		sim.execute('1d20+5')   # 复用同一实例，每次得到独立种子
+		sim = DiceSimulator(config=cfg, lang='zh_CN')
+		sim.execute('3d6')                  # 每次自动用 secrets 生成不可预测种子
+		sim.execute('3d6', seed=42)         # 本次指定 seed，结果可复现
+		sim.execute('1d20+5')               # 复用同一实例
 
 	Tokenizer 与 Parser 由本实例持有并复用（无全局单例）。
 	"""
 
-	def __init__(self, seed=None, *,
+	def __init__(self, *,
 				 config: DiceConfig = None, lang: str = None, rng=None):
 		self.config = config or DiceConfig()
-		self.lang = lang or I18nManager.DEFAULT_LANG
+		# lang 大小写不敏感，统一归一为小写规范形式
+		self.lang = (lang or I18nManager.DEFAULT_LANG).lower()
 
 		# 词法/语法层实例持有并复用；Parser 在 parse() 时重置状态
 		self._tokenizer = Tokenizer()
 		self._parser = Parser(self.config)
 
-		# 基础种子：每次 execute() 基于它推导出独立、可复现的调用种子
-		self.seed = seed if seed is not None else int(time.time())
-		self._rng = rng
-		self._call_count = 0
+		self._rng = rng  # 显式注入随机源（测试等确定性场景），否则按 seed 构造
 
-	def execute(self, expr_str: str) -> DiceResult:
+	def execute(self, expr_str: str, seed: int = None) -> DiceResult:
 		if not isinstance(expr_str, str):
 			raise ValueError("execute() 需要表达式字符串参数，例如 sim.execute('3d6')")
 
-		# 每次执行取独立种子：未注入 rng 时，用「基础种子 + 调用序号」推导，
-		# 这样复用同一实例也不会产生可预测的重复序列，且 result.seed 均可单独重放。
-		if self._rng is not None:
-			rng = self._rng
-			seed = self.seed
-		else:
-			seed = self.seed + self._call_count
-			self._call_count += 1
-			rng = random.Random(seed)
+		# 种子策略：
+		# - 传入 seed → 本次执行基于该 seed，结果稳定可重放；
+		# - 未传入 → 本次用 secrets 生成不可预测种子，result.seed 记录该种子。
+		if seed is None:
+			seed = secrets.randbits(32)
+		rng = self._rng if self._rng is not None else random.Random(seed)
 
 		# 错误以 DiceError（或未知错误 dict）原样携带，到最后组装点才转 dict
 		steps = []
@@ -81,7 +76,7 @@ class DiceSimulator:
 		except Exception as e:
 			# 仅在 API 最外层兜底未知错误
 			error = {"error_code": "err_unknown", "position": None,
-					 "message": str(e), "params": {}}
+					 "message": str(e), "params": {}, "lang": self.lang}
 
 		if error is None:
 			rt = to_runtime(ast)
@@ -132,5 +127,4 @@ class DiceSimulator:
 			is_success=(error_dict is None),
 			seed=seed,
 			error=error_dict,
-			lang=self.lang,
 		)

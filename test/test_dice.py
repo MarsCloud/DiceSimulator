@@ -295,6 +295,48 @@ class TestErrors(unittest.TestCase):
 		self.assertEqual(res.error['error_code'], 'err_div_zero')
 
 
+class TestErrorCodes(unittest.TestCase):
+	"""验证每个可达的错误码都能被真实输入触发。"""
+
+	def _err(self, cfg, expr, rng=None):
+		res = DiceSimulator(config=cfg, rng=rng).execute(expr)
+		return res.error['error_code'] if res.error else None
+
+	def test_all_reachable_error_codes(self):
+		cases = {
+			'err_illegal_char': (DiceConfig(), 'a'),
+			'err_unparsed': (DiceConfig(), '3d6 5'),
+			'err_depth_limit': (DiceConfig(), '(' * 60 + '1' + ')' * 60),
+			'err_missing_paren': (DiceConfig(), '(1+1'),
+			'err_missing_atom': (DiceConfig(), 'd*'),
+			'err_invalid_syntax': (DiceConfig(), '()'),
+			'err_dice_neg': (DiceConfig(), '(-1)d6'),
+			'err_face_min': (DiceConfig(), '1d(-5)'),
+			'err_dice_max': (DiceConfig(max_dice_number=10), '11d6'),
+			'err_face_max': (DiceConfig(max_dice_faces=100), '1d101'),
+			'err_div_zero': (DiceConfig(), '10/0'),
+			'err_steps_limit': (DiceConfig(max_simulation_steps=2),
+								'1*2+1d6d6', FakeRNG([1] * 10)),
+		}
+		for code, args in cases.items():
+			with self.subTest(code=code):
+				got = self._err(*args)
+				self.assertEqual(got, code, f'{args[1]!r} 应触发 {code}，实际 {got}')
+
+	def test_locale_keys_match_reachable_errors(self):
+		# locale 文案键必须恰好等于「可达错误码 + err_unknown 兜底」，
+		# 防止死错误码或假想键混入
+		expected = {
+			'err_illegal_char', 'err_unparsed', 'err_depth_limit',
+			'err_missing_paren', 'err_missing_atom', 'err_invalid_syntax',
+			'err_dice_neg', 'err_face_min', 'err_dice_max', 'err_face_max',
+			'err_div_zero', 'err_steps_limit', 'err_unknown',
+		}
+		for lang in ['zh_CN', 'en_US']:
+			keys = set(I18nManager._load(lang))
+			self.assertEqual(keys, expected, f'{lang} 的文案键不一致')
+
+
 # ==========================================
 # 7. 国际化（实例级 lang）
 # ==========================================
@@ -313,8 +355,8 @@ class TestI18n(unittest.TestCase):
 		en = DiceSimulator(lang='en_US').execute('10 / 0')
 		self.assertEqual(zh.error['message'], self._msg('zh_CN', 'err_div_zero'))
 		self.assertEqual(en.error['message'], self._msg('en_US', 'err_div_zero'))
-		self.assertEqual(zh.lang, 'zh_CN')
-		self.assertEqual(en.lang, 'en_US')
+		self.assertEqual(zh.error['lang'], 'zh_cn')  # 输出统一小写
+		self.assertEqual(en.error['lang'], 'en_us')
 
 	def test_default_lang(self):
 		res = DiceSimulator().execute('10 / 0')
@@ -330,8 +372,8 @@ class TestI18n(unittest.TestCase):
 
 	def test_messages_loaded_from_files(self):
 		langs = I18nManager.available_langs()
-		self.assertIn('zh_CN', langs)
-		self.assertIn('en_US', langs)
+		self.assertIn('zh_cn', langs)
+		self.assertIn('en_us', langs)
 
 	def test_unknown_lang_falls_back_to_default(self):
 		msg = I18nManager.t('err_div_zero', lang='xx_XX')
@@ -373,7 +415,7 @@ class TestI18n(unittest.TestCase):
 
 class TestReusableSimulator(unittest.TestCase):
 	def test_reuse_one_instance(self):
-		sim = DiceSimulator(seed=42)
+		sim = DiceSimulator()
 		r1 = sim.execute('3d6')
 		r2 = sim.execute('1d20+5')
 		self.assertTrue(r1.is_success)
@@ -381,22 +423,30 @@ class TestReusableSimulator(unittest.TestCase):
 		self.assertEqual(r1.raw_input, '3d6')
 		self.assertEqual(r2.raw_input, '1d20+5')
 
-	def test_per_call_independent_seeds(self):
-		sim = DiceSimulator(seed=42)
+	def test_default_calls_get_fresh_seeds(self):
+		sim = DiceSimulator()
 		r1 = sim.execute('3d6')
 		r2 = sim.execute('3d6')
-		self.assertNotEqual(r1.seed, r2.seed)
+		self.assertNotEqual(r1.seed, r2.seed)  # secrets 每次生成新种子
+
+	def test_per_call_seed(self):
+		sim = DiceSimulator()
+		r1 = sim.execute('3d6', seed=42)
+		r2 = sim.execute('3d6', seed=42)
+		self.assertEqual(r1.seed, 42)
+		self.assertEqual(r2.seed, 42)  # 本次指定的 seed 原样记录
+		self.assertEqual(r1.result, r2.result)
+		self.assertEqual(r1.steps, r2.steps)
 
 	def test_same_seed_same_first_result(self):
-		a = DiceSimulator(seed=42).execute('3d6')
-		b = DiceSimulator(seed=42).execute('3d6')
+		a = DiceSimulator().execute('3d6', seed=42)
+		b = DiceSimulator().execute('3d6', seed=42)
 		self.assertEqual(a.result, b.result)
 		self.assertEqual(a.steps, b.steps)
 
 	def test_seed_replay(self):
-		sim = DiceSimulator(seed=42)
-		r1 = sim.execute('3d6')
-		replay = DiceSimulator(seed=r1.seed).execute('3d6')
+		r1 = DiceSimulator().execute('3d6', seed=42)
+		replay = DiceSimulator().execute('3d6', seed=r1.seed)
 		self.assertEqual(replay.result, r1.result)
 		self.assertEqual(replay.steps, r1.steps)
 
@@ -432,7 +482,6 @@ class TestResultStructure(unittest.TestCase):
 		self.assertIs(res.error, None)
 		self.assertTrue(res.is_success)
 		self.assertIsInstance(res.seed, int)
-		self.assertEqual(res.lang, 'zh_CN')
 
 	def test_error_result_fields(self):
 		res = DiceSimulator().execute('10 / 0')
@@ -442,7 +491,7 @@ class TestResultStructure(unittest.TestCase):
 		self.assertEqual(res.error['error_code'], 'err_div_zero')
 		self.assertIsNone(res.error['position'])
 		self.assertIsInstance(res.seed, int)
-		self.assertEqual(res.lang, 'zh_CN')
+		self.assertEqual(res.error['lang'], 'zh_cn')  # lang 在 error 内层，小写输出
 
 
 if __name__ == '__main__':

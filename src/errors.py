@@ -20,9 +20,11 @@ class DiceError(Exception):
 		return I18nManager.t(self.message_key, pos=self.pos, **self.params)
 
 	def to_dict(self, lang: str = None) -> dict:
+		lang = (lang or I18nManager.DEFAULT_LANG).lower()
 		return {
 			"error_code": self.message_key,
 			"position": self.pos,
 			"message": I18nManager.t(self.message_key, lang=lang, pos=self.pos, **self.params),
 			"params": self.params,
+			"lang": lang,  # 只有错误信息需要语言，lang 属于 error 内层
 		}
