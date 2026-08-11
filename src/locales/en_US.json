@@ -1,0 +1,17 @@
+{
+  "err_illegal_char": "Illegal character '{char}' at {pos}",
+  "err_unexpected_end": "Unexpected end of input",
+  "err_syntax": "Syntax error: expected '{expected}', got '{token}' at {pos}",
+  "err_unparsed": "Unparsed characters remaining: '{token}' at {pos}",
+  "err_depth_limit": "Expression recursion depth exceeded",
+  "err_missing_paren": "Mismatched parentheses, missing ')'",
+  "err_missing_atom": "Unexpected end, expected number or '('",
+  "err_invalid_syntax": "Invalid syntax token: '{token}'",
+  "err_dice_neg": "Dice count cannot be negative: {val}",
+  "err_face_min": "Dice faces must be > 0: {val}",
+  "err_dice_max": "Too many dice ({val} > {limit})",
+  "err_face_max": "Dice faces too large ({val} > {limit})",
+  "err_div_zero": "Division by zero",
+  "err_steps_limit": "Computation steps exceeded limit",
+  "err_unknown": "Unknown error"
+}

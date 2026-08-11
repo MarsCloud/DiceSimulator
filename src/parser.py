@@ -1,7 +1,9 @@
 """词法与语法层：Tokenizer + Parser，输出纯 AST（见 ast.py）。
 
-词法规则（全角/Emoji/符号替换、token 模式）为模块级常量——它们是"语言语法"
+词法规则（全角/Emoji/符号替换、token 模式）收在 Tokenizer 类内——它们是"语言语法"
 而非可调限制；解析限制（递归深度、默认面数）来自实例级 DiceConfig。
+Tokenizer 无状态、Parser 在 parse() 时重置状态，因此二者都可复用
+（由 DiceSimulator 各持一份实例）。
 """
 
 import re
@@ -10,147 +12,156 @@ from .ast import Number, Dice, BinOp
 from .config import DiceConfig
 from .errors import DiceError
 
-REPLACEMENTS = {
-    '（': '(', '）': ')',
-    '【': '(', '】': ')',
-    '➕': '+', '➖': '-',
-    '✖': '*', '×': '*', 'x': '*', 'X': '*',
-    '➗': '/', '÷': '/',
-    'd': 'D',
-}
-
-TOKEN_PATTERN = re.compile(r'\d+|D|[+\-*/()]')
-
 
 class Tokenizer:
-    def tokenize(self, text: str):
-        clean_text = text
-        for k, v in REPLACEMENTS.items():
-            clean_text = clean_text.replace(k, v)
+	"""词法器：无状态，可复用。"""
 
-        tokens = []
-        pos = 0
-        length = len(clean_text)
+	_REPLACEMENTS = {
+		'（': '(', '）': ')',
+		'【': '(', '】': ')',
+		'➕': '+', '➖': '-',
+		'✖': '*', '×': '*', 'x': '*', 'X': '*',
+		'➗': '/', '÷': '/',
+		'd': 'D',
+	}
 
-        while pos < length:
-            char = clean_text[pos]
-            if char.isspace():
-                pos += 1
-                continue
+	_TOKEN_PATTERN = re.compile(r'\d+|D|[+\-*/()]')
 
-            match = TOKEN_PATTERN.match(clean_text, pos)
-            if not match:
-                raise DiceError('err_illegal_char', pos=pos, char=char)
+	def tokenize(self, text: str):
+		clean_text = text
+		for k, v in self._REPLACEMENTS.items():
+			clean_text = clean_text.replace(k, v)
 
-            tokens.append(match.group())
-            pos = match.end()
+		tokens = []
+		pos = 0
+		length = len(clean_text)
 
-        return tokens
+		while pos < length:
+			char = clean_text[pos]
+			if char.isspace():
+				pos += 1
+				continue
+
+			match = self._TOKEN_PATTERN.match(clean_text, pos)
+			if not match:
+				raise DiceError('err_illegal_char', pos=pos, char=char)
+
+			tokens.append(match.group())
+			pos = match.end()
+
+		return tokens
 
 
 class Parser:
-    def __init__(self, tokens, config: DiceConfig):
-        self.tokens = tokens
-        self.pos = 0
-        self.n_tokens = len(tokens)
-        self.config = config
+	"""递归下降解析器：配置注入一次，parse(tokens) 可反复调用。"""
 
-    def peek(self):
-        return self.tokens[self.pos] if self.pos < self.n_tokens else None
+	def __init__(self, config: DiceConfig):
+		self.config = config
 
-    def consume(self, expected: str = None) -> str:
-        token = self.peek()
-        if token is None:
-            raise DiceError('err_unexpected_end')
-        if expected and token != expected:
-            raise DiceError('err_syntax', pos=self.pos, expected=expected, token=token)
-        self.pos += 1
-        return token
+	def peek(self):
+		return self.tokens[self.pos] if self.pos < self.n_tokens else None
 
-    def parse(self):
-        if not self.tokens:
-            # 什么都没写默认扔一颗骰子
-            return Dice(Number(1), Number(self.config.default_dice_faces))
-        node = self.expr(depth=0)
-        if self.peek() is not None:
-            raise DiceError('err_unparsed', pos=self.pos, token=self.peek())
-        return node
+	def consume(self, expected: str = None) -> str:
+		token = self.peek()
+		if token is None:
+			raise DiceError('err_unexpected_end')
+		if expected and token != expected:
+			raise DiceError('err_syntax', pos=self.pos, expected=expected, token=token)
+		self.pos += 1
+		return token
 
-    def check_depth(self, depth):
-        if depth > self.config.max_recursion_depth:
-            raise DiceError('err_depth_limit')
+	def parse(self, tokens):
+		# 每次 parse 重置状态，使同一实例可复用
+		self.tokens = tokens
+		self.pos = 0
+		self.n_tokens = len(tokens)
+		if not self.tokens:
+			# 什么都没写默认扔一颗骰子
+			return Dice(Number(1), Number(self.config.default_dice_faces))
+		node = self.expr(depth=0)
+		if self.peek() is not None:
+			raise DiceError('err_unparsed', pos=self.pos, token=self.peek())
+		return node
 
-    # --- Recursive Descent Logic ---
+	def check_depth(self, depth):
+		if depth > self.config.max_recursion_depth:
+			raise DiceError('err_depth_limit')
 
-    def expr(self, depth):
-        self.check_depth(depth)
-        node = self.term(depth + 1)
-        while self.peek() in ('+', '-'):
-            op = self.consume()
-            right = self.term(depth + 1)
-            node = BinOp(node, op, right)
-        return node
+	# --- Recursive Descent Logic ---
 
-    def term(self, depth):
-        self.check_depth(depth)
-        node = self.unary(depth + 1)
-        while self.peek() in ('*', '/'):
-            op = self.consume()
-            right = self.unary(depth + 1)
-            node = BinOp(node, op, right)
-        return node
+	def expr(self, depth):
+		self.check_depth(depth)
+		node = self.term(depth + 1)
+		while self.peek() in ('+', '-'):
+			op = self.consume()
+			right = self.term(depth + 1)
+			node = BinOp(node, op, right)
+		return node
 
-    def unary(self, depth):
-        self.check_depth(depth)
-        sign = 1
-        while self.peek() in ('+', '-'):
-            token = self.consume()
-            if token == '-':
-                sign *= -1
-        node = self.dice_ops(depth + 1)
-        if sign == -1:
-            return BinOp(Number(0), '-', node)
-        return node
+	def term(self, depth):
+		self.check_depth(depth)
+		node = self.unary(depth + 1)
+		while self.peek() in ('*', '/'):
+			op = self.consume()
+			right = self.unary(depth + 1)
+			node = BinOp(node, op, right)
+		return node
 
-    def dice_ops(self, depth):
-        self.check_depth(depth)
-        if self.peek() == 'D':
-            self.consume()
-            if self.peek() and (self.peek().isdigit() or self.peek() == '(' or self.peek() == 'D'):
-                right = self.atom(depth + 1)
-            else:
-                right = Number(self.config.default_dice_faces)
-            node = Dice(Number(1), right)
-        else:
-            node = self.atom(depth + 1)
+	def unary(self, depth):
+		self.check_depth(depth)
+		sign = 1
+		while self.peek() in ('+', '-'):
+			token = self.consume()
+			if token == '-':
+				sign *= -1
+		node = self.dice_ops(depth + 1)
+		if sign == -1:
+			return BinOp(Number(0), '-', node)
+		return node
 
-        while self.peek() == 'D':
-            self.consume()
-            if self.peek() and (self.peek().isdigit() or self.peek() == '(' or self.peek() == 'D'):
-                right = self.atom(depth + 1)
-            else:
-                right = Number(self.config.default_dice_faces)
-            node = Dice(node, right)
-        return node
+	def dice_ops(self, depth):
+		self.check_depth(depth)
+		if self.peek() == 'D':
+			self.consume()
+			if self.peek() and (self.peek().isdigit() or self.peek() == '(' or self.peek() == 'D'):
+				right = self.atom(depth + 1)
+			else:
+				right = Number(self.config.default_dice_faces)
+			node = Dice(Number(1), right)
+		else:
+			node = self.atom(depth + 1)
 
-    def atom(self, depth):
-        self.check_depth(depth)
-        token = self.peek()
-        if token is None:
-            raise DiceError('err_missing_atom')
+		while self.peek() == 'D':
+			self.consume()
+			if self.peek() and (self.peek().isdigit() or self.peek() == '(' or self.peek() == 'D'):
+				right = self.atom(depth + 1)
+			else:
+				right = Number(self.config.default_dice_faces)
+			node = Dice(node, right)
+		return node
 
-        if token.isdigit():
-            return Number(self.consume())
+	def atom(self, depth):
+		self.check_depth(depth)
+		token = self.peek()
+		if token is None:
+			raise DiceError('err_missing_atom')
 
-        if token == '(':
-            self.consume('(')
-            node = self.expr(depth + 1)
-            if self.peek() != ')':
-                raise DiceError('err_missing_paren')
-            self.consume(')')
-            return node
+		if token.isdigit():
+			return Number(self.consume())
 
-        if token == 'D':
-            return self.dice_ops(depth + 1)
+		if token == '(':
+			self.consume('(')
+			node = self.expr(depth + 1)
+			if self.peek() is None:
+				# 输入在 ')' 之前就结束了 → 真的缺右括号
+				raise DiceError('err_missing_paren')
+			if self.peek() != ')':
+				# 括号内还残留其他内容 → 与顶层一致地报"剩余字符"
+				raise DiceError('err_unparsed', pos=self.pos, token=self.peek())
+			self.consume(')')
+			return node
 
-        raise DiceError('err_invalid_syntax', token=token)
+		if token == 'D':
+			return self.dice_ops(depth + 1)
+
+		raise DiceError('err_invalid_syntax', token=token)

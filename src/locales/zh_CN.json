@@ -1,0 +1,17 @@
+{
+  "err_illegal_char": "非法字符 '{char}' (位置: {pos})",
+  "err_unexpected_end": "语句未结束，期待更多输入",
+  "err_syntax": "语法错误: 期待 '{expected}', 但得到 '{token}' (位置: {pos})",
+  "err_unparsed": "无法解析的剩余字符: '{token}' (位置: {pos})",
+  "err_depth_limit": "表达式嵌套过深",
+  "err_missing_paren": "括号不匹配，缺少 ')'",
+  "err_missing_atom": "语句突然结束，期待数字或括号",
+  "err_invalid_syntax": "无效的语法标记: '{token}'",
+  "err_dice_neg": "骰子数量不能为负数: {val}",
+  "err_face_min": "骰子面数必须大于0: {val}",
+  "err_dice_max": "骰子数量过大 ({val} > {limit})",
+  "err_face_max": "骰子面数过大 ({val} > {limit})",
+  "err_div_zero": "除数不能为零",
+  "err_steps_limit": "计算步骤过多，强制停止",
+  "err_unknown": "发生未知错误"
+}
