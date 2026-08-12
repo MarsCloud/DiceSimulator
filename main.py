@@ -17,6 +17,8 @@ def run_test(expr):
 	print(f"\n>>> Input: {expr}")
 	result = _sim.execute(expr)
 	print(json.dumps(asdict(result), ensure_ascii=False, indent=2))
+	if asdict(result)["error"]:
+		print(f"\n>>> {asdict(result)['error']['message']}")
 
 
 def main():

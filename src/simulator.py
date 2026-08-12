@@ -75,7 +75,7 @@ class DiceSimulator:
 			error = e
 		except Exception as e:
 			# 仅在 API 最外层兜底未知错误
-			error = {"error_code": "err_unknown", "position": None,
+			error = {"error_code": "err_unknown",
 					 "message": str(e), "params": {}, "lang": self.lang}
 
 		if error is None:
@@ -117,8 +117,9 @@ class DiceSimulator:
 
 			steps = [s for s, k in zip(raw_steps, keep) if k]
 
-		# 单一组装点：DiceError 在此统一转 dict，其余（未知错误 dict / None）原样透传
-		error_dict = error.to_dict(lang=self.lang) if isinstance(error, DiceError) else error
+		# 单一组装点：DiceError 在此统一转 dict（带上原始表达式以便指示位置的错误
+		# 截取上下文窗口），其余（未知错误 dict / None）原样透传
+		error_dict = error.to_dict(lang=self.lang, source=expr_str) if isinstance(error, DiceError) else error
 
 		return DiceResult(
 			raw_input=expr_str,

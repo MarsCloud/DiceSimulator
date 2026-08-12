@@ -21,6 +21,7 @@ from pathlib import Path
 import unittest
 
 from src.dice_engine import DiceSimulator, DiceConfig, I18nManager
+from src.errors import build_context
 
 
 class FakeRNG:
@@ -337,6 +338,111 @@ class TestErrorCodes(unittest.TestCase):
 			self.assertEqual(keys, expected, f'{lang} 的文案键不一致')
 
 
+class TestContextWindow(unittest.TestCase):
+	"""指示位置的错误：context 承载结构化上下文（position/text/widths/arrow_text），
+	position 合并进 context、顶层不再带；message 保持纯描述。"""
+
+	def _res(self, expr):
+		res = DiceSimulator().execute(expr)
+		self.assertIsNotNone(res.error)
+		return res.error
+
+	def test_context_on_position_errors(self):
+		for expr in ['a', '12+abcde', '12345a6789', '3D（6 5']:
+			with self.subTest(expr=expr):
+				ctx = self._res(expr)['context']
+				self.assertLessEqual(len(ctx['text']), 11, ctx)
+				self.assertIsInstance(ctx['position'], int, ctx)
+				self.assertEqual(ctx['widths'], 1, ctx)  # 系统字符均为 ASCII 宽 1
+				# 箭头行只含空格 + '^'，不带换行（\n 由消费方拼接）
+				self.assertNotIn('\n', ctx['arrow_text'], ctx)
+				self.assertTrue(ctx['arrow_text'].endswith('^'), ctx)
+
+	def test_message_is_pure_description(self):
+		# context 独立成字段，message 只含描述 + 位置数字（不拼上下文窗口）
+		res = self._res('12+abcde')
+		self.assertNotIn('\n', res['message'])
+		self.assertNotIn('^', res['message'])
+		self.assertEqual(res['message'],
+						 I18nManager.t('err_illegal_char', lang='zh_cn', char='a', pos=3))
+
+	def test_pos_in_template_marks_position_errors(self):
+		# 模板里带 {pos} 的错误 = 自带位置参数，一眼可辨哪些有 context
+		pos_keys = {'err_illegal_char', 'err_unparsed',
+					'err_missing_atom', 'err_missing_paren'}
+		for lang in ['zh_CN', 'en_US']:
+			with self.subTest(lang=lang):
+				with_pos = {k for k, v in I18nManager._load(lang).items() if '{pos}' in v}
+				self.assertEqual(with_pos, pos_keys, lang)
+
+	def test_no_context_without_position(self):
+		# 无 pos 的错误没有 context 字段
+		res = self._res('10/0')
+		self.assertNotIn('context', res)
+
+	def test_short_source_no_fake_dots(self):
+		# 源串短于窗口时不加 '..'，避免假装还有未完的输入
+		ctx = self._res('d*')['context']
+		self.assertEqual(ctx['text'], 'd*')
+		self.assertEqual(ctx['arrow_text'], '  ^')
+		self.assertEqual(ctx['position'], 2)
+
+	def test_near_start_form(self):
+		# 出错点靠近开头：源串短于 9 → 原样贴出，无右侧截断点
+		ctx = self._res('a')['context']
+		self.assertEqual(ctx['text'], 'a')
+		self.assertEqual(ctx['arrow_text'], '^')
+		self.assertEqual(ctx['position'], 0)
+
+	def test_middle_form(self):
+		# 出错点在中部，右侧内容被截掉 → 只有右侧补 '..'
+		ctx = self._res('12+abcde')['context']
+		self.assertEqual(ctx['text'], '12+abcd..')
+		self.assertEqual(ctx['arrow_text'], '   ^')
+		self.assertEqual(ctx['position'], 3)
+
+	def test_middle_form_both_truncated(self):
+		# 源串足够长，出错点两侧都有内容被截掉 → 两侧各补 '..'
+		ctx = self._res('12345a6789')['context']
+		self.assertEqual(ctx['text'], '..345a678..')
+		self.assertEqual(ctx['arrow_text'], '     ^')
+
+	def test_near_end_form(self):
+		# 出错点靠近末尾：源串正好 9 个 → 原样贴出，无左侧截断点
+		ctx = self._res('12+34567a')['context']
+		self.assertEqual(ctx['text'], '12+34567a')
+		self.assertEqual(ctx['arrow_text'], '        ^')
+
+	def test_missing_paren_has_context(self):
+		# err_missing_paren 也应带位置：箭头指在应出现 ')' 的游标处
+		ctx = self._res('(1+1')['context']
+		self.assertEqual(ctx['position'], 4)
+		self.assertEqual(ctx['text'], '(1+1')
+		self.assertEqual(ctx['arrow_text'], '    ^')
+
+	def test_unparsed_has_context(self):
+		ctx = self._res('d6)')['context']
+		self.assertEqual(ctx['position'], 2)
+		self.assertEqual(ctx['text'], 'd6)')
+		self.assertEqual(ctx['arrow_text'], '  ^')
+
+	def test_custom_window_length(self):
+		# 窗口长度可自定义（默认 11），小于 5 时钳到 5；'..' 仅在真实截断侧出现
+		src = '1234567890ab'
+		cases = [
+			(3, '..7..'),            # 钳到最小长度 5
+			(5, '..7..'),
+			(7, '..678..'),
+			(11, '..4567890..'),
+			(15, '..234567890ab'),   # 长度大于源串 → 只截真实溢出侧
+		]
+		for length, expected in cases:
+			with self.subTest(length=length):
+				ctx = build_context(src, 6, length=length)
+				self.assertEqual(ctx['text'], expected)
+				self.assertLessEqual(len(ctx['text']), max(5, length))  # 钳到最小 5
+
+
 # ==========================================
 # 7. 国际化（实例级 lang）
 # ==========================================
@@ -489,7 +595,6 @@ class TestResultStructure(unittest.TestCase):
 		self.assertIsNone(res.result)
 		self.assertEqual(res.steps, ['10/0'])  # 首步渲染仍被保留，说明出错位置
 		self.assertEqual(res.error['error_code'], 'err_div_zero')
-		self.assertIsNone(res.error['position'])
 		self.assertIsInstance(res.seed, int)
 		self.assertEqual(res.error['lang'], 'zh_cn')  # lang 在 error 内层，小写输出
 

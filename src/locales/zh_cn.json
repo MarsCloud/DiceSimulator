@@ -1,0 +1,15 @@
+{
+  "err_illegal_char": "遇到了未知的字符 '{char}'（位置: {pos}）",
+  "err_unparsed": "表达式后面还有多余的内容 '{token}'（位置: {pos}）",
+  "err_depth_limit": "递归深度超出上限",
+  "err_missing_paren": "括号配对失败，缺少右括号（位置: {pos}）",
+  "err_missing_atom": "表达式在这里断了，后面应该有数字或表达式（位置: {pos}）",
+  "err_invalid_syntax": "'{token}' 不是合法的输入",
+  "err_dice_neg": "骰子个数不能是负数：{val}",
+  "err_face_min": "骰子的面数最少是 1，你写了 {val}",
+  "err_dice_max": "一次最多掷 {limit} 颗骰子，你写了 {val}",
+  "err_face_max": "一颗骰子最多 {limit} 个面，你写了 {val}",
+  "err_div_zero": "除数不能是 0",
+  "err_steps_limit": "计算步骤过多",
+  "err_unknown": "发生未知错误"
+}
